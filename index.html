@@ -108,12 +108,24 @@ details.cfg summary { cursor: pointer; color: var(--muted); font-size: .9rem; }
 }
 .form input:focus-visible { outline: 2px solid var(--c2); outline-offset: 1px; }
 .form .wide { grid-column: 1 / -1; }
-.form small { color: var(--muted); font-size: .75rem; }
 .linkrow { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
 .linkrow code {
   font-family: var(--font-mono); font-size: .78rem; background: var(--surface); border: 1px solid var(--line);
   border-radius: 6px; padding: 8px 10px; flex: 1 1 280px; min-width: 0; overflow-wrap: anywhere; user-select: all;
 }
+.slots { display: grid; gap: 6px; margin-top: 14px; }
+.slotrow { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) 72px 36px; gap: 6px; align-items: center; }
+.slotrow.head span { font-size: .75rem; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
+.slotrow input {
+  font: inherit; font-size: .92rem; color: var(--fg); background: var(--surface);
+  border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; min-width: 0; width: 100%;
+}
+.slotrow input:focus-visible { outline: 2px solid var(--c2); outline-offset: 1px; }
+.slotrow .del {
+  font: inherit; font-size: 1.1rem; line-height: 1; height: 34px; border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--line); background: transparent; color: var(--muted);
+}
+.slotrow .del:hover { color: var(--warn); border-color: var(--warn); }
 .cfg .btn { padding: 8px 14px; font-size: .9rem; }
 
 @media (max-width: 520px) {
@@ -156,13 +168,17 @@ details.cfg summary { cursor: pointer; color: var(--muted); font-size: .9rem; }
 
   <details class="cfg" id="cfg">
     <summary>Structuur aanpassen voor een andere meeting</summary>
-    <form class="form" id="form">
-      <label class="wide">Titel<input id="f-title" type="text"></label>
-      <label>Deelnemers check-in<input id="f-people" type="text"><small>Komma-gescheiden. Leeg = geen check-in.</small></label>
-      <label>Minuten per persoon<input id="f-checkin" type="number" min="0.5" step="0.5"></label>
-      <label>Minuten vragen na check-in<input id="f-vragen" type="number" min="0" step="0.5"><small>0 = geen vragenblok.</small></label>
-      <label class="wide">Blokken na de check-in<input id="f-blocks" type="text"><small>Naam:minuten, komma-gescheiden. Bijvoorbeeld Tensions:10,Actionables:5</small></label>
-      <div class="wide"><button class="btn" type="submit">Toepassen</button></div>
+    <form id="form">
+      <div class="form">
+        <label class="wide">Naam meeting<input id="f-title" type="text"></label>
+      </div>
+      <div class="slots" id="slots" role="table" aria-label="Slots">
+        <div class="slotrow head" role="row"><span role="columnheader">Titel</span><span role="columnheader">Slot</span><span role="columnheader">Min</span><span></span></div>
+      </div>
+      <div class="linkrow">
+        <button class="btn" id="add" type="button">+ Slot toevoegen</button>
+        <button class="btn primary" type="submit">Toepassen</button>
+      </div>
     </form>
     <div class="linkrow">
       <code id="link"></code>
@@ -172,43 +188,56 @@ details.cfg summary { cursor: pointer; color: var(--muted); font-size: .9rem; }
 </div>
 
 <script>
-// Structure comes from URL parameters (query string or #hash), falling back to the pilot agenda.
-// ?title=…&people=Kenneth,Nick,Joey&checkin=3&vragen=1&blocks=Tensions:10,Actionables:5
+// Structure comes from URL parameters (query string or #hash): one `slot` per block, as Titel:Slot:minuten.
+// ?title=Weekly%20Sync&slot=Check-in:Kenneth:3&slot=Check-in:Nick:3&slot=Tensions:Tensions:10
 // Without parameters the page shows this neutral example and opens the settings panel.
-const DEFAULTS = { title: "Weekly Sync", people: "Persoon A,Persoon B,Persoon C", checkin: "3", vragen: "1", blocks: "Tensions:10,Actionables:5" };
+const EXAMPLE = {
+  title: "Weekly Sync",
+  slots: [
+    { phase: "Check-in", who: "Persoon A", min: 3 },
+    { phase: "Check-in", who: "Persoon B", min: 3 },
+    { phase: "Check-in", who: "Persoon C", min: 3 },
+    { phase: "Check-in", who: "Vragen", min: 1 },
+    { phase: "Tensions", who: "Tensions", min: 10 },
+    { phase: "Actionables", who: "Actionables", min: 5 },
+  ],
+};
 const HINTS = {
-  checkin: "Wat is er gebeurd, wat komt eraan, waar loop je vast? Geen discussie.",
+  "check-in": "Wat is er gebeurd, wat komt eraan, waar loop je vast? Geen discussie.",
   vragen: "Enkel verduidelijkingsvragen. Inhoudelijke discussie wordt een tension.",
   tensions: "Overloop de tensions met status Nieuw. Per tension: actionable, geparkeerd of afgesloten.",
   actionables: "Eerst open actionables van vorige week, dan de nieuwe. Eén eigenaar en een deadline per actionable.",
 };
-const PEOPLE_C = ["--c1", "--c2", "--c3", "--c5", "--c4"];
-const BLOCK_C = ["--c4", "--c5", "--c2", "--c3", "--c1"];
+const COLORS = ["--c1", "--c2", "--c3", "--c4", "--c5"];
 const $ = id => document.getElementById(id);
 const fmt = s => { const neg = s < 0; s = Math.abs(Math.round(s)); return (neg ? "+" : "") + Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
 const mins = sec => (Math.round(sec / 6) / 10).toString().replace(".", ",");
 
+// "Titel:Slot:minuten"; "Slot:minuten" uses the slot name as title.
+function parseSlot(str) {
+  const parts = str.split(":").map(s => s.trim());
+  const min = parseFloat((parts.pop() || "").replace(",", "."));
+  const phase = parts.length > 1 ? parts.shift() : parts[0];
+  const who = parts.join(":") || phase;
+  return who && min > 0 ? { phase, who, min } : null;
+}
+
 function readParams() {
   const p = new URLSearchParams(location.search);
-  new URLSearchParams(location.hash.slice(1)).forEach((v, k) => { if (!p.has(k)) p.set(k, v); });
-  const cfg = {};
-  for (const k in DEFAULTS) cfg[k] = p.has(k) ? p.get(k) : DEFAULTS[k];
-  return cfg;
+  new URLSearchParams(location.hash.slice(1)).forEach((v, k) => p.append(k, v));
+  const slots = p.getAll("slot").map(parseSlot).filter(Boolean);
+  if (!slots.length) return { title: p.get("title") || EXAMPLE.title, slots: EXAMPLE.slots.map(s => ({ ...s })) };
+  return { title: p.get("title") || EXAMPLE.title, slots };
 }
 
 function buildSegs(cfg) {
-  const segs = [];
-  const per = Math.max(0, parseFloat(cfg.checkin) || 0) * 60;
-  const people = cfg.people.split(",").map(s => s.trim()).filter(Boolean);
-  if (per > 0) people.forEach((who, i) => segs.push({ phase: "Check-in", who, c: PEOPLE_C[i % PEOPLE_C.length], sec: per, hint: HINTS.checkin }));
-  const vragen = Math.max(0, parseFloat(cfg.vragen) || 0) * 60;
-  if (people.length && per > 0 && vragen > 0) segs.push({ phase: "Check-in", who: "Vragen", c: "--vragen", sec: vragen, hint: HINTS.vragen });
-  cfg.blocks.split(",").map(s => s.trim()).filter(Boolean).forEach((b, i) => {
-    const m = b.match(/^(.*?):\s*([\d.]+)$/);
-    const who = (m ? m[1] : b).trim(), sec = (m ? parseFloat(m[2]) : 5) * 60;
-    if (who && sec > 0) segs.push({ phase: who, who, c: BLOCK_C[i % BLOCK_C.length], sec, hint: HINTS[who.toLowerCase()] || "" });
+  let ci = 0;
+  return cfg.slots.map(s => {
+    const vragen = s.who.toLowerCase() === "vragen";
+    const c = vragen ? "--vragen" : COLORS[ci++ % COLORS.length];
+    const hint = HINTS[s.who.toLowerCase()] || HINTS[s.phase.toLowerCase()] || "";
+    return { phase: s.phase, who: s.who, c, sec: s.min * 60, hint };
   });
-  return segs.length ? segs : buildSegs(DEFAULTS);
 }
 
 let CFG = readParams(), SEGS = buildSegs(CFG), TOTAL = 0;
@@ -238,21 +267,51 @@ function setup() {
   phases.forEach(ph => {
     const sp = document.createElement("span"); sp.textContent = `${ph.name} · ${mins(ph.sec)} min`; sp.style.flex = ph.sec; $("phases").appendChild(sp);
   });
-  for (const k in DEFAULTS) $("f-" + k).value = CFG[k];
+  $("f-title").value = CFG.title;
+  $("slots").querySelectorAll(".slotrow:not(.head)").forEach(r => r.remove());
+  CFG.slots.forEach(addRow);
   $("link").textContent = shareLink();
+}
+
+let rowId = 0;
+function addRow(s) {
+  const n = rowId++;
+  const row = document.createElement("div"); row.className = "slotrow"; row.setAttribute("role", "row");
+  const field = (cls, type, value, label) => {
+    const i = document.createElement("input");
+    i.id = `slot-${n}-${cls}`; i.className = cls; i.type = type; i.value = value; i.setAttribute("aria-label", label);
+    if (type === "number") { i.min = "0.5"; i.step = "0.5"; }
+    return i;
+  };
+  const del = document.createElement("button");
+  del.type = "button"; del.className = "del"; del.textContent = "×"; del.setAttribute("aria-label", "Slot verwijderen");
+  del.addEventListener("click", () => row.remove());
+  row.append(field("phase", "text", s.phase, "Titel"), field("who", "text", s.who, "Slot"), field("min", "number", s.min, "Minuten"), del);
+  $("slots").appendChild(row);
+  return row;
 }
 
 function shareLink() {
   const p = new URLSearchParams();
-  for (const k in DEFAULTS) p.set(k, CFG[k]);
+  p.set("title", CFG.title);
+  CFG.slots.forEach(s => p.append("slot", `${s.phase}:${s.who}:${s.min}`));
   const base = location.origin + location.pathname;
-  return `${base}?${p.toString().replace(/%2C/g, ",").replace(/%3A/g, ":")}`;
+  return `${base}?${p.toString().replace(/%3A/g, ":")}`;
 }
 
+$("add").addEventListener("click", () => {
+  const last = CFG.slots.length ? $("slots").lastElementChild.querySelector(".phase")?.value || "" : "";
+  addRow({ phase: last, who: "", min: 3 }).querySelector(".who").focus();
+});
 $("form").addEventListener("submit", e => {
   e.preventDefault();
-  for (const k in DEFAULTS) CFG[k] = $("f-" + k).value.trim();
-  if (!CFG.title) CFG.title = DEFAULTS.title;
+  const slots = [...$("slots").querySelectorAll(".slotrow:not(.head)")].map(r => {
+    const who = r.querySelector(".who").value.trim(), phase = r.querySelector(".phase").value.trim() || who;
+    const min = parseFloat(r.querySelector(".min").value.replace(",", "."));
+    return who && min > 0 ? { phase, who, min } : null;
+  }).filter(Boolean);
+  if (!slots.length) return;
+  CFG = { title: $("f-title").value.trim() || EXAMPLE.title, slots };
   SEGS = buildSegs(CFG);
   running = false; lockScreen(false);
   setup(); render();
