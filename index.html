@@ -127,7 +127,7 @@ details.cfg summary { cursor: pointer; color: var(--muted); font-size: .9rem; }
 
 <div class="wrap">
   <header>
-    <h1 id="title">Product × Business Development · Weekly Sync</h1>
+    <h1 id="title">Weekly Sync</h1>
     <div class="total" id="total">25:00 resterend van 25:00</div>
   </header>
 
@@ -174,7 +174,8 @@ details.cfg summary { cursor: pointer; color: var(--muted); font-size: .9rem; }
 <script>
 // Structure comes from URL parameters (query string or #hash), falling back to the pilot agenda.
 // ?title=…&people=Kenneth,Nick,Joey&checkin=3&vragen=1&blocks=Tensions:10,Actionables:5
-const DEFAULTS = { title: "Product × Business Development · Weekly Sync", people: "Kenneth,Nick,Joey", checkin: "3", vragen: "1", blocks: "Tensions:10,Actionables:5" };
+// Without parameters the page shows this neutral example and opens the settings panel.
+const DEFAULTS = { title: "Weekly Sync", people: "Persoon A,Persoon B,Persoon C", checkin: "3", vragen: "1", blocks: "Tensions:10,Actionables:5" };
 const HINTS = {
   checkin: "Wat is er gebeurd, wat komt eraan, waar loop je vast? Geen discussie.",
   vragen: "Enkel verduidelijkingsvragen. Inhoudelijke discussie wordt een tension.",
@@ -243,10 +244,9 @@ function setup() {
 
 function shareLink() {
   const p = new URLSearchParams();
-  for (const k in DEFAULTS) if (CFG[k] !== DEFAULTS[k]) p.set(k, CFG[k]);
+  for (const k in DEFAULTS) p.set(k, CFG[k]);
   const base = location.origin + location.pathname;
-  const q = p.toString().replace(/%2C/g, ",").replace(/%3A/g, ":");
-  return q ? `${base}?${q}` : base;
+  return `${base}?${p.toString().replace(/%2C/g, ",").replace(/%3A/g, ":")}`;
 }
 
 $("form").addEventListener("submit", e => {
@@ -350,6 +350,7 @@ document.addEventListener("keydown", e => {
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && running) lockScreen(true); });
 setup();
 render();
+if (!location.search && !location.hash) $("cfg").open = true;
 </script>
 </body>
 </html>
