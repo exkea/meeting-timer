@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Weekly Sync Timer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@500;700&family=JetBrains+Mono:wght@500;700&display=swap">
+<style>
+/* Layout: one column; a proportional 25-minute strip of agenda blocks on top, the running block's countdown huge below, controls under it. */
+:root {
+  --bg: #f3f4f7;
+  --surface: #ffffff;
+  --fg: #16181f;
+  --muted: #5d6272;
+  --line: #d9dce4;
+  --c1: #d6453d;
+  --c2: #2f6fd6;
+  --c3: #239a5b;
+  --vragen: #7a7f8f;
+  --c4: #d9822b;
+  --c5: #7b4fd1;
+  --warn: #d6453d;
+  --font-display: "Familjen Grotesk", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #12141a; --surface: #1b1e27; --fg: #eef0f5; --muted: #9aa0b2; --line: #2c3040;
+    --c1: #f0675f; --c2: #5d93ef; --c3: #43c27f; --vragen: #8d93a5; --c4: #f0a050; --c5: #a07ef0; --warn: #f0675f;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #12141a; --surface: #1b1e27; --fg: #eef0f5; --muted: #9aa0b2; --line: #2c3040;
+  --c1: #f0675f; --c2: #5d93ef; --c3: #43c27f; --vragen: #8d93a5; --c4: #f0a050; --c5: #a07ef0; --warn: #f0675f;
+  color-scheme: dark;
+}
+html, body { height: 100%; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+body {
+  background: var(--bg); color: var(--fg); font-family: var(--font-display);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 20px;
+}
+.wrap { max-width: 860px; margin: 0 auto; display: grid; gap: 22px; }
+header { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+h1 { font-size: 1.15rem; margin: 0; font-weight: 700; letter-spacing: .01em; }
+.total { font-family: var(--font-mono); color: var(--muted); font-size: .95rem; font-variant-numeric: tabular-nums; }
+
+.strip { display: flex; gap: 3px; height: 54px; }
+.seg {
+  position: relative; border: 0; padding: 0; cursor: pointer; overflow: hidden;
+  background: color-mix(in srgb, var(--c) 18%, var(--surface));
+  border-radius: 4px; min-width: 0; color: var(--fg); font: inherit;
+}
+.seg .fill { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--c); opacity: .9; }
+.seg .lab {
+  position: relative; display: block; padding: 6px 7px; text-align: left; font-size: .72rem;
+  line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.seg .lab b { display: block; font-size: .8rem; }
+.seg.active { outline: 2px solid var(--c); outline-offset: 2px; }
+.seg.done .lab { color: #fff; }
+.seg:focus-visible { outline: 3px solid var(--fg); outline-offset: 2px; }
+.phases { display: flex; gap: 3px; font-size: .7rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-top: -14px; }
+.phases span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; border-top: 1px solid var(--line); padding-top: 5px; }
+
+.stage {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+  padding: clamp(20px, 5vw, 44px) clamp(16px, 4vw, 40px); display: grid; gap: 10px; justify-items: center; text-align: center;
+  border-top: 6px solid var(--c, var(--line));
+}
+.kicker { font-size: .78rem; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); }
+.who { font-size: clamp(1.6rem, 5vw, 2.4rem); font-weight: 700; color: var(--c); text-wrap: balance; }
+.hint { color: var(--muted); max-width: 52ch; font-size: .95rem; line-height: 1.45; }
+.clock {
+  font-family: var(--font-mono); font-weight: 700; font-variant-numeric: tabular-nums;
+  font-size: clamp(4.5rem, 20vw, 10rem); line-height: 1; letter-spacing: -.03em; margin-block: 6px;
+}
+.stage.warn .clock { color: var(--warn); }
+.stage.over .clock { color: var(--warn); animation: blink 1s steps(2) infinite; }
+@keyframes blink { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .stage.over .clock { animation: none; } }
+.next { font-size: .9rem; color: var(--muted); }
+
+.controls { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+button.btn {
+  font: inherit; font-weight: 700; font-size: 1rem; padding: 12px 20px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--surface); color: var(--fg);
+}
+button.btn.primary { background: var(--fg); color: var(--bg); border-color: var(--fg); min-width: 130px; }
+button.btn:focus-visible { outline: 3px solid var(--c2); outline-offset: 2px; }
+.opts { display: flex; gap: 18px; justify-content: center; flex-wrap: wrap; color: var(--muted); font-size: .88rem; }
+.opts label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+.keys { text-align: center; color: var(--muted); font-size: .8rem; }
+kbd { font-family: var(--font-mono); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; font-size: .75rem; }
+
+details.cfg { border-top: 1px solid var(--line); padding-top: 14px; }
+details.cfg summary { cursor: pointer; color: var(--muted); font-size: .9rem; }
+.form { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px 16px; margin-top: 14px; }
+.form label { display: grid; gap: 4px; font-size: .82rem; color: var(--muted); min-width: 0; }
+.form input {
+  font: inherit; font-size: .95rem; color: var(--fg); background: var(--surface);
+  border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; min-width: 0;
+}
+.form input:focus-visible { outline: 2px solid var(--c2); outline-offset: 1px; }
+.form .wide { grid-column: 1 / -1; }
+.form small { color: var(--muted); font-size: .75rem; }
+.linkrow { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+.linkrow code {
+  font-family: var(--font-mono); font-size: .78rem; background: var(--surface); border: 1px solid var(--line);
+  border-radius: 6px; padding: 8px 10px; flex: 1 1 280px; min-width: 0; overflow-wrap: anywhere; user-select: all;
+}
+.cfg .btn { padding: 8px 14px; font-size: .9rem; }
+
+@media (max-width: 520px) {
+  .seg .lab { padding: 5px 4px; font-size: .6rem; }
+  .seg .lab b { font-size: .66rem; }
+  .phases { font-size: .58rem; }
+}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <h1 id="title">Product × Business Development · Weekly Sync</h1>
+    <div class="total" id="total">25:00 resterend van 25:00</div>
+  </header>
+
+  <div class="strip" id="strip" role="list" aria-label="Agenda"></div>
+  <div class="phases" id="phases" aria-hidden="true"></div>
+
+  <section class="stage" id="stage" aria-live="polite">
+    <div class="kicker" id="kicker"></div>
+    <div class="who" id="who"></div>
+    <div class="hint" id="hint"></div>
+    <div class="clock" id="clock" role="timer">0:00</div>
+    <div class="next" id="next"></div>
+  </section>
+
+  <div class="controls">
+    <button class="btn" id="prev" type="button">← Vorige</button>
+    <button class="btn primary" id="play" type="button">Start</button>
+    <button class="btn" id="skip" type="button">Volgende →</button>
+    <button class="btn" id="reset" type="button">Reset</button>
+  </div>
+  <div class="opts">
+    <label><input type="checkbox" id="auto" checked> Automatisch naar volgend blok</label>
+    <label><input type="checkbox" id="sound" checked> Geluid</label>
+  </div>
+  <div class="keys"><kbd>Spatie</kbd> start/pauze · <kbd>→</kbd> volgende · <kbd>←</kbd> vorige</div>
+
+  <details class="cfg" id="cfg">
+    <summary>Structuur aanpassen voor een andere meeting</summary>
+    <form class="form" id="form">
+      <label class="wide">Titel<input id="f-title" type="text"></label>
+      <label>Deelnemers check-in<input id="f-people" type="text"><small>Komma-gescheiden. Leeg = geen check-in.</small></label>
+      <label>Minuten per persoon<input id="f-checkin" type="number" min="0.5" step="0.5"></label>
+      <label>Minuten vragen na check-in<input id="f-vragen" type="number" min="0" step="0.5"><small>0 = geen vragenblok.</small></label>
+      <label class="wide">Blokken na de check-in<input id="f-blocks" type="text"><small>Naam:minuten, komma-gescheiden. Bijvoorbeeld Tensions:10,Actionables:5</small></label>
+      <div class="wide"><button class="btn" type="submit">Toepassen</button></div>
+    </form>
+    <div class="linkrow">
+      <code id="link"></code>
+      <button class="btn" id="copy" type="button">Kopieer link</button>
+    </div>
+  </details>
+</div>
+
+<script>
+// Structure comes from URL parameters (query string or #hash), falling back to the pilot agenda.
+// ?title=…&people=Kenneth,Nick,Joey&checkin=3&vragen=1&blocks=Tensions:10,Actionables:5
+const DEFAULTS = { title: "Product × Business Development · Weekly Sync", people: "Kenneth,Nick,Joey", checkin: "3", vragen: "1", blocks: "Tensions:10,Actionables:5" };
+const HINTS = {
+  checkin: "Wat is er gebeurd, wat komt eraan, waar loop je vast? Geen discussie.",
+  vragen: "Enkel verduidelijkingsvragen. Inhoudelijke discussie wordt een tension.",
+  tensions: "Overloop de tensions met status Nieuw. Per tension: actionable, geparkeerd of afgesloten.",
+  actionables: "Eerst open actionables van vorige week, dan de nieuwe. Eén eigenaar en een deadline per actionable.",
+};
+const PEOPLE_C = ["--c1", "--c2", "--c3", "--c5", "--c4"];
+const BLOCK_C = ["--c4", "--c5", "--c2", "--c3", "--c1"];
+const $ = id => document.getElementById(id);
+const fmt = s => { const neg = s < 0; s = Math.abs(Math.round(s)); return (neg ? "+" : "") + Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
+const mins = sec => (Math.round(sec / 6) / 10).toString().replace(".", ",");
+
+function readParams() {
+  const p = new URLSearchParams(location.search);
+  new URLSearchParams(location.hash.slice(1)).forEach((v, k) => { if (!p.has(k)) p.set(k, v); });
+  const cfg = {};
+  for (const k in DEFAULTS) cfg[k] = p.has(k) ? p.get(k) : DEFAULTS[k];
+  return cfg;
+}
+
+function buildSegs(cfg) {
+  const segs = [];
+  const per = Math.max(0, parseFloat(cfg.checkin) || 0) * 60;
+  const people = cfg.people.split(",").map(s => s.trim()).filter(Boolean);
+  if (per > 0) people.forEach((who, i) => segs.push({ phase: "Check-in", who, c: PEOPLE_C[i % PEOPLE_C.length], sec: per, hint: HINTS.checkin }));
+  const vragen = Math.max(0, parseFloat(cfg.vragen) || 0) * 60;
+  if (people.length && per > 0 && vragen > 0) segs.push({ phase: "Check-in", who: "Vragen", c: "--vragen", sec: vragen, hint: HINTS.vragen });
+  cfg.blocks.split(",").map(s => s.trim()).filter(Boolean).forEach((b, i) => {
+    const m = b.match(/^(.*?):\s*([\d.]+)$/);
+    const who = (m ? m[1] : b).trim(), sec = (m ? parseFloat(m[2]) : 5) * 60;
+    if (who && sec > 0) segs.push({ phase: who, who, c: BLOCK_C[i % BLOCK_C.length], sec, hint: HINTS[who.toLowerCase()] || "" });
+  });
+  return segs.length ? segs : buildSegs(DEFAULTS);
+}
+
+let CFG = readParams(), SEGS = buildSegs(CFG), TOTAL = 0;
+let idx = 0, left = 0, running = false, lastTick = 0, warned = false, ended = false, wakeLock = null, ctx = null;
+
+function setup() {
+  TOTAL = SEGS.reduce((a, s) => a + s.sec, 0);
+  idx = 0; left = SEGS[0].sec; warned = false; ended = false;
+  $("title").textContent = CFG.title;
+  // strip + phase labels, widths proportional to minutes
+  $("strip").replaceChildren(); $("phases").replaceChildren();
+  SEGS.forEach((s, i) => {
+    const b = document.createElement("button");
+    b.className = "seg"; b.type = "button"; b.setAttribute("role", "listitem");
+    b.style.flex = s.sec; b.style.setProperty("--c", `var(${s.c})`);
+    const fill = document.createElement("span"); fill.className = "fill";
+    const lab = document.createElement("span"); lab.className = "lab";
+    const name = document.createElement("b"); name.textContent = s.who;
+    lab.append(name, `${mins(s.sec)} min`);
+    b.append(fill, lab);
+    b.setAttribute("aria-label", `${s.who}, ${mins(s.sec)} minuten`);
+    b.addEventListener("click", () => go(i));
+    $("strip").appendChild(b);
+  });
+  const phases = [];
+  SEGS.forEach(s => { const last = phases[phases.length - 1]; if (last && last.name === s.phase) last.sec += s.sec; else phases.push({ name: s.phase, sec: s.sec }); });
+  phases.forEach(ph => {
+    const sp = document.createElement("span"); sp.textContent = `${ph.name} · ${mins(ph.sec)} min`; sp.style.flex = ph.sec; $("phases").appendChild(sp);
+  });
+  for (const k in DEFAULTS) $("f-" + k).value = CFG[k];
+  $("link").textContent = shareLink();
+}
+
+function shareLink() {
+  const p = new URLSearchParams();
+  for (const k in DEFAULTS) if (CFG[k] !== DEFAULTS[k]) p.set(k, CFG[k]);
+  const base = location.origin + location.pathname;
+  const q = p.toString().replace(/%2C/g, ",").replace(/%3A/g, ":");
+  return q ? `${base}?${q}` : base;
+}
+
+$("form").addEventListener("submit", e => {
+  e.preventDefault();
+  for (const k in DEFAULTS) CFG[k] = $("f-" + k).value.trim();
+  if (!CFG.title) CFG.title = DEFAULTS.title;
+  SEGS = buildSegs(CFG);
+  running = false; lockScreen(false);
+  setup(); render();
+  try { history.replaceState(null, "", shareLink()); } catch (err) {}
+});
+$("copy").addEventListener("click", () => {
+  const text = $("link").textContent;
+  const sel = () => { const r = document.createRange(); r.selectNodeContents($("link")); const s = getSelection(); s.removeAllRanges(); s.addRange(r); };
+  if (navigator.clipboard) navigator.clipboard.writeText(text).then(() => { $("copy").textContent = "Gekopieerd"; setTimeout(() => $("copy").textContent = "Kopieer link", 1500); }, sel);
+  else sel();
+});
+
+function beep(freqs) {
+  if (!$("sound").checked) return;
+  try {
+    ctx = ctx || new (window.AudioContext || window.webkitAudioContext)();
+    let t = ctx.currentTime;
+    freqs.forEach(f => {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.frequency.value = f; o.type = "sine";
+      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.3, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
+      o.connect(g).connect(ctx.destination); o.start(t); o.stop(t + 0.4); t += 0.42;
+    });
+  } catch (e) {}
+}
+
+async function lockScreen(on) {
+  try {
+    if (on && "wakeLock" in navigator && !wakeLock) wakeLock = await navigator.wakeLock.request("screen");
+    if (!on && wakeLock) { await wakeLock.release(); wakeLock = null; }
+  } catch (e) { wakeLock = null; }
+}
+
+function render() {
+  const s = SEGS[idx];
+  const stage = $("stage");
+  stage.style.setProperty("--c", `var(${s.c})`);
+  $("kicker").textContent = `${s.phase} · blok ${idx + 1} van ${SEGS.length}`;
+  $("who").textContent = s.who;
+  $("hint").textContent = s.hint;
+  $("clock").textContent = fmt(left);
+  stage.classList.toggle("warn", left <= 30 && left > 0);
+  stage.classList.toggle("over", left <= 0);
+  $("next").textContent = idx < SEGS.length - 1 ? `Hierna: ${SEGS[idx + 1].who} (${SEGS[idx + 1].sec / 60} min)` : (left <= 0 ? "Meeting klaar." : "Laatste blok.");
+  $("play").textContent = running ? "Pauze" : (left < s.sec ? "Verder" : "Start");
+  const done = SEGS.slice(0, idx).reduce((a, x) => a + x.sec, 0) + (s.sec - Math.max(left, 0));
+  $("total").textContent = `${fmt(TOTAL - done)} resterend van ${fmt(TOTAL)}`;
+  [...$("strip").children].forEach((b, i) => {
+    const pct = i < idx ? 100 : i > idx ? 0 : Math.min(100, (1 - Math.max(left, 0) / s.sec) * 100);
+    b.querySelector(".fill").style.width = pct + "%";
+    b.classList.toggle("active", i === idx);
+    b.classList.toggle("done", i < idx);
+  });
+  document.title = running ? `${fmt(left)} · ${s.who}` : "Weekly Sync Timer";
+}
+
+function tick(now) {
+  if (!running) return;
+  const dt = (now - lastTick) / 1000; lastTick = now;
+  left -= dt;
+  if (!warned && left <= 30 && left > 0) { warned = true; beep([660]); }
+  if (left <= 0 && !ended) {
+    ended = true;
+    if (idx < SEGS.length - 1 && $("auto").checked) { beep([880, 660]); go(idx + 1, true); }
+    else beep([880, 660, 440]);
+  }
+  render();
+  requestAnimationFrame(tick);
+}
+
+function go(i) {
+  idx = Math.max(0, Math.min(SEGS.length - 1, i));
+  left = SEGS[idx].sec; warned = false; ended = false;
+  render();
+}
+
+function toggle() {
+  running = !running;
+  if (running) { lastTick = performance.now(); requestAnimationFrame(tick); beep([]); }
+  lockScreen(running);
+  render();
+}
+
+$("play").addEventListener("click", toggle);
+$("skip").addEventListener("click", () => go(idx + 1, true));
+$("prev").addEventListener("click", () => go(idx - 1, true));
+$("reset").addEventListener("click", () => { running = false; lockScreen(false); go(0); });
+document.addEventListener("keydown", e => {
+  if (e.target.closest("input, summary")) return;
+  if (e.code === "Space" && e.target.closest("button")) return;
+  if (e.code === "Space") { e.preventDefault(); toggle(); }
+  else if (e.key === "ArrowRight") go(idx + 1, true);
+  else if (e.key === "ArrowLeft") go(idx - 1, true);
+});
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && running) lockScreen(true); });
+setup();
+render();
+</script>
+</body>
+</html>
